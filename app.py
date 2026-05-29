@@ -14,6 +14,15 @@ import base64
 # Hard cap: one batch cannot exceed this many files (uploader + processing).
 MAX_FILES_PER_BATCH = 300
 
+# Tabs: each country runs the same pipeline with its own state namespace and
+# phone-number standardization target (+61 for AU, +60 for MY).
+COUNTRIES = ["AU", "MY"]
+
+
+def _key(name, country):
+    """Build a country-namespaced session-state key."""
+    return f"{name}_{country}"
+
 
 def main():
     st.set_page_config(
@@ -25,27 +34,38 @@ def main():
     st.title("📄 Resume Parser 2.0")
     st.title("💰Road to Million Biller!!!")
 
-    
-    # Initialize session state
-    if 'processed_candidates' not in st.session_state:
-        st.session_state.processed_candidates = []
-    if 'processing_complete' not in st.session_state:
-        st.session_state.processing_complete = False
-    if 'processing_in_progress' not in st.session_state:
-        st.session_state.processing_in_progress = False
-    
+    # Initialize per-country session state
+    for country in COUNTRIES:
+        if _key('processed_candidates', country) not in st.session_state:
+            st.session_state[_key('processed_candidates', country)] = []
+        if _key('processing_complete', country) not in st.session_state:
+            st.session_state[_key('processing_complete', country)] = False
+        if _key('processing_in_progress', country) not in st.session_state:
+            st.session_state[_key('processing_in_progress', country)] = False
+
+    # Shared branding logo, shown once above the tabs
+    _logo = "linktal logo transparent copy.png"
+    if os.path.isfile(_logo):
+        st.image(_logo, width=350)
+
     # Check credentials availability
     credentials_status = check_credentials()
 
-    
-    # Main content area
+    tabs = st.tabs(COUNTRIES)
+    for tab, country in zip(tabs, COUNTRIES):
+        with tab:
+            render_country_tab(country, credentials_status)
+
+
+def render_country_tab(country, credentials_status):
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
         uploaded_files = st.file_uploader(
             f"Upload resumes (max {MAX_FILES_PER_BATCH} files per batch)",
             type=['pdf', 'docx', 'doc', 'txt'],
             accept_multiple_files=True,
+            key=_key('uploader', country),
         )
 
         over_limit = bool(uploaded_files) and len(uploaded_files) > MAX_FILES_PER_BATCH
@@ -58,54 +78,63 @@ def main():
 
         if uploaded_files and not over_limit:
             st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully")
-            
+
             # Display uploaded files
             with st.expander("📋 Uploaded Files", expanded=True):
                 for i, file in enumerate(uploaded_files, 1):
                     file_type = file.name.split('.')[-1].upper()
                     st.write(f"{i}. {file.name} ({file.size} bytes) - {file_type}")
-            
+
             # Process files button
             process_disabled = (
                 not credentials_status['deepseek_status']
-                or st.session_state.processing_in_progress
+                or st.session_state[_key('processing_in_progress', country)]
             )
-            
-            if st.button("Process Resumes", type="primary", use_container_width=True, disabled=process_disabled):
+
+            if st.button(
+                "Process Resumes",
+                type="primary",
+                use_container_width=True,
+                disabled=process_disabled,
+                key=_key('process_btn', country),
+            ):
                 if not credentials_status['deepseek_status']:
                     st.error("Please configure OpenRouter API credentials before processing.")
                 else:
-                    process_resumes(uploaded_files)
-    
+                    process_resumes(uploaded_files, country)
+
     with col2:
-        _logo = "linktal logo transparent copy.png"
-        if os.path.isfile(_logo):
-            st.image(_logo, width=350)
         st.header("Processing Status")
-        
-        if st.session_state.processing_in_progress:
+
+        if st.session_state[_key('processing_in_progress', country)]:
             st.info("Processing")
-        elif st.session_state.processed_candidates:
-            st.metric("Processed Candidates", len(st.session_state.processed_candidates))
-            
-            if st.session_state.processing_complete:
+        elif st.session_state[_key('processed_candidates', country)]:
+            st.metric("Processed Candidates", len(st.session_state[_key('processed_candidates', country)]))
+
+            if st.session_state[_key('processing_complete', country)]:
                 st.success("Processed successfully!")
 
-                if st.button("Download Excel Report", type = "secondary",use_container_width=True):
-                    generate_and_download_excel()
+                if st.button(
+                    "Download Excel Report",
+                    type="secondary",
+                    use_container_width=True,
+                    key=_key('download_btn', country),
+                ):
+                    generate_and_download_excel(country)
             else:
                 st.info("No candidates processed yet.")
-     
-    
+
     # Display processed candidates
-    if st.session_state.processed_candidates:
+    candidates = st.session_state[_key('processed_candidates', country)]
+    if candidates:
         st.header("Processed Candidates")
-        
+
         # Create DataFrame for display
         display_data = []
-        for candidate in st.session_state.processed_candidates:
+        for candidate in candidates:
             display_data.append({
                 'Role Type': candidate.get('role type', ''),
+                'FullName': candidate.get('full name', ''),
                 'First Name': candidate.get('first name', ''),
                 'Last Name': candidate.get('last name', ''),
                 'Mobile': candidate.get('mobile', ''),
@@ -122,9 +151,10 @@ def main():
                 'Location': candidate.get('location', ''),
                 'Source File': candidate.get('filename', ''),
             })
-        
+
         df = pd.DataFrame(display_data)
         st.dataframe(df, use_container_width=True)
+
 
 def check_credentials():
     deepseek_status = False
@@ -141,7 +171,8 @@ def check_credentials():
         'deepseek_status': deepseek_status
     }
 
-def process_resumes(uploaded_files):
+
+def process_resumes(uploaded_files, country):
     if len(uploaded_files) > MAX_FILES_PER_BATCH:
         st.error(
             f"Processing blocked: more than {MAX_FILES_PER_BATCH} files ({len(uploaded_files)}). "
@@ -149,9 +180,9 @@ def process_resumes(uploaded_files):
         )
         return
 
-    st.session_state.processing_in_progress = True
-    st.session_state.processing_complete = False
-    st.session_state.processed_candidates = []
+    st.session_state[_key('processing_in_progress', country)] = True
+    st.session_state[_key('processing_complete', country)] = False
+    st.session_state[_key('processed_candidates', country)] = []
     
     try:
         # Initialize services
@@ -160,10 +191,10 @@ def process_resumes(uploaded_files):
                 pdf_processor = PDFProcessor()
                 word_processor = WordProcessor()
                 text_processor = TextProcessor()
-                ai_parser = AIParser(st.secrets["DEEPSEEK_API_KEY"])
+                ai_parser = AIParser(st.secrets["DEEPSEEK_API_KEY"], country)
             except Exception as e:
                 st.error(f"Error initializing services: {str(e)}")
-                st.session_state.processing_in_progress = False
+                st.session_state[_key('processing_in_progress', country)] = False
                 return
         
         # Progress tracking
@@ -210,7 +241,7 @@ def process_resumes(uploaded_files):
                 parsed_data['filename'] = uploaded_file.name
                 
                 # Add to results
-                st.session_state.processed_candidates.append(parsed_data)
+                st.session_state[_key('processed_candidates', country)].append(parsed_data)
                 successful_processes += 1
                 
                 
@@ -222,8 +253,8 @@ def process_resumes(uploaded_files):
         progress_bar.progress(1.0)
         
         # Mark processing as complete
-        st.session_state.processing_complete = True
-        st.session_state.processing_in_progress = False
+        st.session_state[_key('processing_complete', country)] = True
+        st.session_state[_key('processing_in_progress', country)] = False
         
         if successful_processes > 0:
             st.success(f"Successfully processed {successful_processes}/{total_files} resume files.")
@@ -232,26 +263,27 @@ def process_resumes(uploaded_files):
             
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
-        st.session_state.processing_in_progress = False
+        st.session_state[_key('processing_in_progress', country)] = False
         # Show detailed error for debugging
         with st.expander("Error Details"):
             st.code(traceback.format_exc())
 
 
-def generate_and_download_excel():
+def generate_and_download_excel(country):
     """Generate and auto-download Excel report"""
     try:
-        if not st.session_state.processed_candidates:
+        candidates = st.session_state[_key('processed_candidates', country)]
+        if not candidates:
             st.warning("No candidate data to export.")
             return
 
         with st.spinner("Generating Excel report..."):
             exporter = ExcelExporter()
-            excel_data = exporter.export_candidates(st.session_state.processed_candidates)
+            excel_data = exporter.export_candidates(candidates)
 
             # Encode to base64 for direct download
             b64 = base64.b64encode(excel_data).decode()
-            filename = "resume_analysis.xlsx"
+            filename = f"resume_analysis_{country}.xlsx"
             
             # Auto trigger download
             js = f"""
@@ -274,42 +306,3 @@ def generate_and_download_excel():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
