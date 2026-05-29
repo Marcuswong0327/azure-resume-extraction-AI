@@ -55,11 +55,11 @@ class AIParser:
             "X-Title": "Resume Parser"
         }
 
-    
+    @staticmethod
     def _strip_existing_span(s: str) -> str:
         return _TRAILING_SPAN.sub("", s).strip()
 
-    
+    @staticmethod
     def _split_date_range(base: str) -> tuple[str | None, str | None]:
         for pat in _RANGE_SPLIT:
             m = pat.search(base)
@@ -70,15 +70,16 @@ class AIParser:
         return None, None
 
 
+    @staticmethod
     def _years_in(s: str) -> list[int]:
         return [int(y) for y in _YEAR_4.findall(s)]
 
-
+    @staticmethod
     def _first_year_in(s: str) -> int | None:
         m = _YEAR_4.search(s)
         return int(m.group(1)) if m else None
 
-
+    @staticmethod
     def _parse_range_token(part: str, hint_year: int | None) -> date | None:
         """
         Parse one side of a range. If the text has no 4-digit year, use hint_year
@@ -99,6 +100,8 @@ class AIParser:
             return None
 
 
+    @staticmethod
+    # adding static method
     def _span_label(start_d: date, end_d: date) -> str:
         if end_d < start_d:
             start_d, end_d = end_d, start_d
@@ -114,6 +117,7 @@ class AIParser:
         return " ".join(parts) if parts else ""
 
 
+    @staticmethod
     def _append_calculated_duration(duration_raw: str) -> str:
         """
         Turn 'Jan 2025 - Jan 2026' into 'Jan 2025 - Jan 2026 (1 year)'.
