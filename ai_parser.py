@@ -23,15 +23,31 @@ _TRAILING_SPAN = re.compile(r"\s*\([^)]*\)\s*$")
 _YEAR_4 = re.compile(r"\b(19\d{2}|20\d{2})\b")
 
 
+_COUNTRY_PHONE_RULES = {
+    "AU": {
+        "code": "+61",
+        "name": "Australia",
+    },
+    "MY": {
+        "code": "+60",
+        "name": "Malaysia",
+    },
+}
+
+
 class AIParser:
     """Handle Claude Sonnet 4 API integration via OpenRouter for intelligent resume parsing"""
     
-    def __init__(self, api_key):
+    def __init__(self, api_key, country="AU"):
 
         if not api_key:
             raise ValueError("OpenRouter API key is required")
-            
+
+        if country not in _COUNTRY_PHONE_RULES:
+            raise ValueError(f"Unsupported country: {country!r} (expected one of {list(_COUNTRY_PHONE_RULES)})")
+
         self.api_key = api_key
+        self.country = country
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
@@ -39,11 +55,11 @@ class AIParser:
             "X-Title": "Resume Parser"
         }
 
-    @staticmethod
+    
     def _strip_existing_span(s: str) -> str:
         return _TRAILING_SPAN.sub("", s).strip()
 
-    @staticmethod
+    
     def _split_date_range(base: str) -> tuple[str | None, str | None]:
         for pat in _RANGE_SPLIT:
             m = pat.search(base)
@@ -53,16 +69,16 @@ class AIParser:
                     return left, right
         return None, None
 
-    @staticmethod
+
     def _years_in(s: str) -> list[int]:
         return [int(y) for y in _YEAR_4.findall(s)]
 
-    @staticmethod
+
     def _first_year_in(s: str) -> int | None:
         m = _YEAR_4.search(s)
         return int(m.group(1)) if m else None
 
-    @staticmethod
+
     def _parse_range_token(part: str, hint_year: int | None) -> date | None:
         """
         Parse one side of a range. If the text has no 4-digit year, use hint_year
@@ -82,7 +98,7 @@ class AIParser:
         except (ValueError, OverflowError, TypeError, OSError):
             return None
 
-    @staticmethod
+
     def _span_label(start_d: date, end_d: date) -> str:
         if end_d < start_d:
             start_d, end_d = end_d, start_d
@@ -97,7 +113,7 @@ class AIParser:
             parts.append("1 day" if days == 1 else f"{days} days")
         return " ".join(parts) if parts else ""
 
-    @staticmethod
+
     def _append_calculated_duration(duration_raw: str) -> str:
         """
         Turn 'Jan 2025 - Jan 2026' into 'Jan 2025 - Jan 2026 (1 year)'.
@@ -156,7 +172,11 @@ class AIParser:
         max_chars = 15000
         if len(resume_text) > max_chars:
             resume_text = resume_text[:max_chars] + "..."
-        
+
+        rule = _COUNTRY_PHONE_RULES.get(self.country, _COUNTRY_PHONE_RULES["AU"])
+        country_code = rule["code"]
+        country_name = rule["name"]
+
         prompt = f"""
 You are an expert resume parser. Analyze the following resume text and extract structured information in JSON format.
 
@@ -193,7 +213,12 @@ Ordering rules (work experience — use dates, not resume layout order):
 Other fields:
 - **role type**: always return "" (reserved column for downstream use).
 - **first name** / **last name**: from the header; split full name logically.
-- **mobile** / **email**: contact near the name/header when possible.
+- **email**: contact near the name/header when possible.
+- **mobile**: the candidate's phone number, **standardized to E.164 format with no spaces, dashes, or parentheses**. This batch is for **{country_name}**, so:
+    - Collapse all local variations (e.g. "0412 345 678", "012-345 6789", "(02) 1234 5678", with or without a country code) into a single E.164 string.
+    - For {country_name} numbers, the country code is **{country_code}**. Drop the national trunk leading "0" before adding the code (e.g. AU "0412 345 678" -> "+61412345678"; MY "012-345 6789" -> "+60123456789").
+    - If the number already has a different valid country code (e.g. "+44...", "+65..."), **leave it unchanged** — do not force it to {country_code}.
+    - If there is no usable phone number, return "".
 - **location**: city/region/country the candidate states as current or primary (header, summary, or contact line). If none, "".
 
 General:
@@ -310,6 +335,7 @@ General:
 
         validated_data = {
             "role type": s("role type"),
+            "full name": "",
             "first name": s("first name"),
             "last name": s("last name"),
             "mobile": s("mobile"),
@@ -339,11 +365,16 @@ General:
         for dkey in ("duration 1", "duration 2", "duration 3"):
             validated_data[dkey] = self._append_calculated_duration(validated_data[dkey])
 
+        validated_data["full name"] = " ".join(
+            p for p in (validated_data["first name"], validated_data["last name"]) if p
+        ).strip()
+
         return validated_data
 
     def _create_empty_structure(self):
         return {
             "role type": "",
+            "full name": "",
             "first name": "",
             "last name": "",
             "mobile": "",
