@@ -161,7 +161,7 @@ def check_credentials():
     
     try:
         # Check OpenRouter API key
-        if "DEEPSEEK_API_KEY" in st.secrets:
+        if "CLAUDE_SONNET_4_API_KEY" in st.secrets:
             deepseek_status = True
             
     except Exception as e:
