@@ -234,7 +234,7 @@ def process_resumes(uploaded_files, country):
                 pdf_processor = PDFProcessor()
                 word_processor = WordProcessor()
                 text_processor = TextProcessor()
-                ai_parser = AIParser(st.secrets["DEEPSEEK_API_KEY"], country)
+                ai_parser = AIParser(st.secrets["CLAUDE_SONNET_4_API_KEY"], country)
             except Exception as e:
                 st.error(f"Error initializing services: {str(e)}")
                 st.session_state[_key('processing_in_progress', country)] = False
