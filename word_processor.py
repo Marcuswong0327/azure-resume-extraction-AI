@@ -62,7 +62,7 @@ class WordProcessor:
                 err = err.decode("latin-1", errors="replace")
             st.error(
                 f"antiword failed (exit {result.returncode}). "
-                f"{str(err).strip() or 'The file may be corrupted or not a Word 97–2003 document.'}"
+                f"{str(err).strip() or 'The file may be corrupted.'}"
             )
             return ""
 
