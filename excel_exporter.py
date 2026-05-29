@@ -25,6 +25,12 @@ class ExcelExporter:
             if not candidates_data:
                 raise ValueError("No candidate data to export")
             
+            # Only add the Download Link column when at least one candidate has a
+            # SAS link injected by the caller (Azure on). Stays Azure-agnostic.
+            include_download = any(
+                candidate.get('download_link') for candidate in candidates_data
+            )
+
             # Prepare data for DataFrame
             excel_data = []
             
@@ -48,6 +54,8 @@ class ExcelExporter:
                     'Location': candidate.get('location', ''),
                     'Source File': candidate.get('filename', ''),
                 }
+                if include_download:
+                    row['Download Link'] = candidate.get('download_link', '')
                 excel_data.append(row)
             
             # Create DataFrame
