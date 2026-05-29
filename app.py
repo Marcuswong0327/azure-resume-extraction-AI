@@ -4,11 +4,13 @@ import streamlit as st
 import pandas as pd
 import json
 import traceback
+from datetime import timedelta
 from pdf_processor import PDFProcessor
 from word_processor import WordProcessor
 from text_processor import TextProcessor
 from ai_parser import AIParser
 from excel_exporter import ExcelExporter
+from blob_uploader import BlobUploader
 import base64
 
 # Hard cap: one batch cannot exceed this many files (uploader + processing).
@@ -22,6 +24,18 @@ COUNTRIES = ["AU", "MY"]
 def _key(name, country):
     """Build a country-namespaced session-state key."""
     return f"{name}_{country}"
+
+
+def get_blob_uploader():
+    """Return a configured BlobUploader, or None when archiving is disabled.
+
+    Constructed per call from secrets (cheap; no network until a blob op runs).
+    Returns None for graceful degradation when Azure is not configured.
+    """
+    try:
+        return BlobUploader.from_secrets(st.secrets)
+    except Exception:
+        return None
 
 
 def main():
@@ -67,6 +81,12 @@ def render_country_tab(country, credentials_status):
             accept_multiple_files=True,
             key=_key('uploader', country),
         )
+
+        if get_blob_uploader() is None:
+            st.caption(
+                "Resume archiving is disabled — add Azure secrets to store files "
+                "and enable durable download links."
+            )
 
         over_limit = bool(uploaded_files) and len(uploaded_files) > MAX_FILES_PER_BATCH
 
@@ -129,10 +149,14 @@ def render_country_tab(country, credentials_status):
     if candidates:
         st.header("Processed Candidates")
 
+        # Uploader for minting short-lived "Open" links (regenerated each render).
+        uploader = get_blob_uploader()
+        has_open_links = False
+
         # Create DataFrame for display
         display_data = []
         for candidate in candidates:
-            display_data.append({
+            row = {
                 'Role Type': candidate.get('role type', ''),
                 'FullName': candidate.get('full name', ''),
                 'First Name': candidate.get('first name', ''),
@@ -150,10 +174,29 @@ def render_country_tab(country, credentials_status):
                 'Company 3': candidate.get('company 3', ''),
                 'Location': candidate.get('location', ''),
                 'Source File': candidate.get('filename', ''),
-            })
+            }
+
+            blob_path = candidate.get('blob_path')
+            if uploader is not None and blob_path:
+                try:
+                    row['Open'] = uploader.generate_sas_url(
+                        blob_path, timedelta(hours=1)
+                    )
+                    has_open_links = True
+                except Exception:
+                    row['Open'] = ''
+
+            display_data.append(row)
 
         df = pd.DataFrame(display_data)
-        st.dataframe(df, use_container_width=True)
+
+        column_config = {}
+        if has_open_links and 'Open' in df.columns:
+            column_config['Open'] = st.column_config.LinkColumn(
+                'Open', help="Time-limited link (1 hour)", display_text="Open"
+            )
+
+        st.dataframe(df, use_container_width=True, column_config=column_config)
 
 
 def check_credentials():
@@ -203,6 +246,9 @@ def process_resumes(uploaded_files, country):
             progress_bar = st.progress(0)
             status_text = st.empty()
         
+        # Archiving uploader (None when Azure is not configured → no-op archiving)
+        uploader = get_blob_uploader()
+
         total_files = len(uploaded_files)
         successful_processes = 0
         
@@ -211,7 +257,27 @@ def process_resumes(uploaded_files, country):
                 current_progress = (i / total_files)
                 progress_bar.progress(current_progress)
                 status_text.text(f"Processing {uploaded_file.name}... ({i+1}/{total_files})")
-                
+
+                # Read bytes once (non-consuming) so we can archive and then let
+                # the processors read the same upload independently.
+                data = uploaded_file.getvalue()
+
+                # Archive-first: upload to blob storage before extraction so the
+                # permanent URL is available to attach to the parsed record.
+                permanent_url = None
+                blob_path = None
+                if uploader is not None:
+                    try:
+                        permanent_url, blob_path = uploader.upsert(
+                            data, uploaded_file.name, country
+                        )
+                    except Exception as upload_error:
+                        # Fail-soft: keep parsing; Source File falls back to the
+                        # original filename below.
+                        st.warning(
+                            f"Could not archive {uploaded_file.name}: {upload_error}"
+                        )
+
                 # Extract text based on file type
                 file_extension = uploaded_file.name.lower().split('.')[-1]
                 extracted_text = ""
@@ -237,8 +303,11 @@ def process_resumes(uploaded_files, country):
                 with st.spinner(f"Analyzing {uploaded_file.name}."):
                     parsed_data = ai_parser.parse_resume(extracted_text)
                 
-                # Add filename to the parsed data
-                parsed_data['filename'] = uploaded_file.name
+                # Source File = durable permanent blob URL when archived, else
+                # fall back to the original filename (fail-soft / Azure off).
+                parsed_data['filename'] = permanent_url or uploaded_file.name
+                if blob_path:
+                    parsed_data['blob_path'] = blob_path
                 
                 # Add to results
                 st.session_state[_key('processed_candidates', country)].append(parsed_data)
@@ -277,9 +346,25 @@ def generate_and_download_excel(country):
             st.warning("No candidate data to export.")
             return
 
+        # When Azure is on, add a 1-year SAS download link per archived file.
+        # The permanent URL stays in Source File; this is an extra column.
+        uploader = get_blob_uploader()
+        export_candidates = []
+        for candidate in candidates:
+            export_candidate = dict(candidate)
+            blob_path = candidate.get('blob_path')
+            if uploader is not None and blob_path:
+                try:
+                    export_candidate['download_link'] = uploader.generate_sas_url(
+                        blob_path, timedelta(days=365)
+                    )
+                except Exception:
+                    pass
+            export_candidates.append(export_candidate)
+
         with st.spinner("Generating Excel report..."):
             exporter = ExcelExporter()
-            excel_data = exporter.export_candidates(candidates)
+            excel_data = exporter.export_candidates(export_candidates)
 
             # Encode to base64 for direct download
             b64 = base64.b64encode(excel_data).decode()
