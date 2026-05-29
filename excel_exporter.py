@@ -31,6 +31,7 @@ class ExcelExporter:
             for candidate in candidates_data:
                 row = {
                     'Role Type': candidate.get('role type', ''),
+                    'FullName': candidate.get('full name', ''),
                     'First Name': candidate.get('first name', ''),
                     'Last Name': candidate.get('last name', ''),
                     'Mobile': candidate.get('mobile', ''),
