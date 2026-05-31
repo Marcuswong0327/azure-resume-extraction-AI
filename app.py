@@ -4,7 +4,6 @@ import streamlit as st
 import pandas as pd
 import json
 import traceback
-from datetime import timedelta
 from pdf_processor import PDFProcessor
 from word_processor import WordProcessor
 from text_processor import TextProcessor
@@ -326,26 +325,11 @@ def generate_and_download_excel(country):
             st.warning("No candidate data to export.")
             return
 
-        # When Azure is on, the Source File column holds a 1-year SAS link
-        # (clickable/downloadable) instead of the bare permanent blob URL.
-        # Falls back to the original value when archiving is off or fails.
-        uploader = get_blob_uploader()
-        export_candidates = []
-        for candidate in candidates:
-            export_candidate = dict(candidate)
-            blob_path = candidate.get('blob_path')
-            if uploader is not None and blob_path:
-                try:
-                    export_candidate['filename'] = uploader.generate_sas_url(
-                        blob_path, timedelta(days=365)
-                    )
-                except Exception:
-                    pass
-            export_candidates.append(export_candidate)
-
+        # Source File already holds the bare permanent blob URL (public),
+        # so the Excel export uses the candidates as-is.
         with st.spinner("Generating Excel report..."):
             exporter = ExcelExporter()
-            excel_data = exporter.export_candidates(export_candidates)
+            excel_data = exporter.export_candidates(candidates)
 
             # Encode to base64 for direct download
             b64 = base64.b64encode(excel_data).decode()
