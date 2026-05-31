@@ -26,11 +26,14 @@ def _key(name, country):
     return f"{name}_{country}"
 
 
+@st.cache_resource(show_spinner=False)
 def get_blob_uploader():
     """Return a configured BlobUploader, or None when archiving is disabled.
 
-    Constructed per call from secrets (cheap; no network until a blob op runs).
-    Returns None for graceful degradation when Azure is not configured.
+    Cached as a process-wide singleton: Streamlit reruns the whole script on
+    every interaction, so building the client (and its one-time CreateContainer
+    probe) per call would spam the storage account with transactions. Caching
+    builds it once. Returns None for graceful degradation when Azure is off.
     """
     try:
         return BlobUploader.from_secrets(st.secrets)
@@ -107,7 +110,7 @@ def render_country_tab(country, credentials_status):
 
             # Process files button
             process_disabled = (
-                not credentials_status['deepseek_status']
+                not credentials_status['claude_status']
                 or st.session_state[_key('processing_in_progress', country)]
             )
 
@@ -118,7 +121,7 @@ def render_country_tab(country, credentials_status):
                 disabled=process_disabled,
                 key=_key('process_btn', country),
             ):
-                if not credentials_status['deepseek_status']:
+                if not credentials_status['claude_status']:
                     st.error("Please configure OpenRouter API credentials before processing.")
                 else:
                     process_resumes(uploaded_files, country)
@@ -149,14 +152,10 @@ def render_country_tab(country, credentials_status):
     if candidates:
         st.header("Processed Candidates")
 
-        # Uploader for minting short-lived "Open" links (regenerated each render).
-        uploader = get_blob_uploader()
-        has_open_links = False
-
         # Create DataFrame for display
         display_data = []
         for candidate in candidates:
-            row = {
+            display_data.append({
                 'Role Type': candidate.get('role type', ''),
                 'FullName': candidate.get('full name', ''),
                 'First Name': candidate.get('first name', ''),
@@ -174,44 +173,25 @@ def render_country_tab(country, credentials_status):
                 'Company 3': candidate.get('company 3', ''),
                 'Location': candidate.get('location', ''),
                 'Source File': candidate.get('filename', ''),
-            }
-
-            blob_path = candidate.get('blob_path')
-            if uploader is not None and blob_path:
-                try:
-                    row['Open'] = uploader.generate_sas_url(
-                        blob_path, timedelta(hours=1)
-                    )
-                    has_open_links = True
-                except Exception:
-                    row['Open'] = ''
-
-            display_data.append(row)
+            })
 
         df = pd.DataFrame(display_data)
-
-        column_config = {}
-        if has_open_links and 'Open' in df.columns:
-            column_config['Open'] = st.column_config.LinkColumn(
-                'Open', help="Time-limited link (1 hour)", display_text="Open"
-            )
-
-        st.dataframe(df, use_container_width=True, column_config=column_config)
+        st.dataframe(df, use_container_width=True)
 
 
 def check_credentials():
-    deepseek_status = False
+    claude_status = False
     
     try:
         # Check OpenRouter API key
         if "CLAUDE_SONNET_4_API_KEY" in st.secrets:
-            deepseek_status = True
+            claude_status = True
             
     except Exception as e:
         st.error(f"Error checking credentials: {str(e)}")
     
     return {
-        'deepseek_status': deepseek_status
+        'claude_status': claude_status
     }
 
 
@@ -346,8 +326,9 @@ def generate_and_download_excel(country):
             st.warning("No candidate data to export.")
             return
 
-        # When Azure is on, add a 1-year SAS download link per archived file.
-        # The permanent URL stays in Source File; this is an extra column.
+        # When Azure is on, the Source File column holds a 1-year SAS link
+        # (clickable/downloadable) instead of the bare permanent blob URL.
+        # Falls back to the original value when archiving is off or fails.
         uploader = get_blob_uploader()
         export_candidates = []
         for candidate in candidates:
@@ -355,7 +336,7 @@ def generate_and_download_excel(country):
             blob_path = candidate.get('blob_path')
             if uploader is not None and blob_path:
                 try:
-                    export_candidate['download_link'] = uploader.generate_sas_url(
+                    export_candidate['filename'] = uploader.generate_sas_url(
                         blob_path, timedelta(days=365)
                     )
                 except Exception:
