@@ -3,15 +3,13 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 try:
     from azure.storage.blob import (
-        BlobSasPermissions,
         BlobServiceClient,
         ContentSettings,
-        generate_blob_sas,
     )
     from azure.core.exceptions import ResourceExistsError
 
@@ -44,10 +42,7 @@ class BlobUploader:
         self._account_name = conn_parts.get("AccountName")
         self._account_key = conn_parts.get("AccountKey")
         if not self._account_name or not self._account_key:
-            raise ValueError(
-                "Connection string must contain AccountName and AccountKey "
-                "(account-key auth, Option A)."
-            )
+            raise ValueError("Connection string must contain AccountName and AccountKey ")
 
         self._container_name = container_name
         self._service_client = BlobServiceClient.from_connection_string(
@@ -56,7 +51,7 @@ class BlobUploader:
         self._container_client = self._service_client.get_container_client(
             container_name
         )
-        self._ensure_container()
+        # self._ensure_container()
 
     @classmethod
     def from_secrets(cls, secrets) -> Optional["BlobUploader"]:
@@ -79,12 +74,12 @@ class BlobUploader:
         except Exception:
             return None
 
-    def _ensure_container(self) -> None:
+    # def _ensure_container(self) -> None:
        
-        try:
-            self._container_client.create_container()
-        except Exception:
-            pass
+    #     try:
+    #         self._container_client.create_container()
+    #     except Exception:
+    #         pass
 
     def _blob_path(self, data: bytes, filename: str, country: str) -> str:
         ext = os.path.splitext(filename)[1].lower()
@@ -123,16 +118,3 @@ class BlobUploader:
             pass
 
         return blob_client.url, blob_path
-
-    def generate_sas_url(self, blob_path: str, expiry: timedelta) -> str:
-        # generate sas url from blob with expiry date
-        blob_client = self._container_client.get_blob_client(blob_path)
-        sas_token = generate_blob_sas(
-            account_name=self._account_name,
-            container_name=self._container_name,
-            blob_name=blob_path,
-            account_key=self._account_key,
-            permission=BlobSasPermissions(read=True),
-            expiry=datetime.now(timezone.utc) + expiry,
-        )
-        return f"{blob_client.url}?{sas_token}"
