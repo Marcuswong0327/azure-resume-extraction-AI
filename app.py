@@ -99,10 +99,10 @@ def render_country_tab(country, credentials_status):
             )
 
         if uploaded_files and not over_limit:
-            st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully")
+            st.success(f"{len(uploaded_files)} file(s) uploaded successfully")
 
             # Display uploaded files
-            with st.expander("📋 Uploaded Files", expanded=True):
+            with st.expander("Uploaded Files", expanded=True):
                 for i, file in enumerate(uploaded_files, 1):
                     file_type = file.name.split('.')[-1].upper()
                     st.write(f"{i}. {file.name} ({file.size} bytes) - {file_type}")
@@ -237,12 +237,9 @@ def process_resumes(uploaded_files, country):
                 progress_bar.progress(current_progress)
                 status_text.text(f"Processing {uploaded_file.name}... ({i+1}/{total_files})")
 
-                # Read bytes once (non-consuming) so we can archive and then let
-                # the processors read the same upload independently.
                 data = uploaded_file.getvalue()
 
-                # Archive-first: upload to blob storage before extraction so the
-                # permanent URL is available to attach to the parsed record.
+                # Archive-first: upload to blob storage before extraction
                 permanent_url = None
                 blob_path = None
                 if uploader is not None:
@@ -250,9 +247,7 @@ def process_resumes(uploaded_files, country):
                         permanent_url, blob_path = uploader.upsert(
                             data, uploaded_file.name, country
                         )
-                    except Exception as upload_error:
-                        # Fail-soft: keep parsing; Source File falls back to the
-                        # original filename below.
+                    except Exception as upload_error: #fallback use fileName
                         st.warning(
                             f"Could not archive {uploaded_file.name}: {upload_error}"
                         )
@@ -282,8 +277,7 @@ def process_resumes(uploaded_files, country):
                 with st.spinner(f"Analyzing {uploaded_file.name}."):
                     parsed_data = ai_parser.parse_resume(extracted_text)
                 
-                # Source File = durable permanent blob URL when archived, else
-                # fall back to the original filename (fail-soft / Azure off).
+
                 parsed_data['filename'] = permanent_url or uploaded_file.name
                 if blob_path:
                     parsed_data['blob_path'] = blob_path
@@ -325,13 +319,11 @@ def generate_and_download_excel(country):
             st.warning("No candidate data to export.")
             return
 
-        # Source File already holds the bare permanent blob URL (public),
-        # so the Excel export uses the candidates as-is.
         with st.spinner("Generating Excel report..."):
             exporter = ExcelExporter()
             excel_data = exporter.export_candidates(candidates)
 
-            # Encode to base64 for direct download
+        
             b64 = base64.b64encode(excel_data).decode()
             filename = f"resume_analysis_{country}.xlsx"
             

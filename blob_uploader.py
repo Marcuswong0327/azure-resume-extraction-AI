@@ -30,7 +30,7 @@ def _parse_connection_string(connection_string: str) -> dict:
 
 
 class BlobUploader:
-    #Uploads resumes to Azure container and mints read SAS URLs.
+    #Uploads resumes to Azure container and returns permanent blob url
 
     def __init__(self, connection_string: str, container_name: str):
         if not _AZURE_AVAILABLE:
