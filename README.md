@@ -1,9 +1,9 @@
 # resume-extraction-original
-#Title 
+# Title 
 
-##Description
+## Description
 
-###Installation steps 
+### Installation steps 
 
 **bold fonts** 
 
