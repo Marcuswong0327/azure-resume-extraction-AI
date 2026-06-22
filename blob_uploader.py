@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
+from config import get_secret
+
 try:
     from azure.storage.blob import (
         BlobServiceClient,
@@ -54,25 +56,25 @@ class BlobUploader:
         # self._ensure_container()
 
     @classmethod
-    def from_secrets(cls, secrets) -> Optional["BlobUploader"]:
-
+    def from_settings(cls) -> Optional["BlobUploader"]:
         if not _AZURE_AVAILABLE:
             return None
 
-        try:
-            connection_string = secrets.get("AZURE_STORAGE_CONNECTION_STRING")
-            container_name = secrets.get("AZURE_BLOB_CONTAINER", "resume-archive")
-        except Exception:
-            connection_string = None
-            container_name = "resume-archive"
+        connection_string = get_secret("AZURE_STORAGE_CONNECTION_STRING")
+        container_name = get_secret("AZURE_BLOB_CONTAINER", "resume-archive")
 
         if not connection_string:
             return None
 
         try:
-            return cls(connection_string, container_name)
+            return cls(connection_string, container_name or "resume-archive")
         except Exception:
             return None
+
+    @classmethod
+    def from_secrets(cls, secrets=None) -> Optional["BlobUploader"]:
+        """Backward-compatible alias for :meth:`from_settings`."""
+        return cls.from_settings()
 
     # def _ensure_container(self) -> None:
        

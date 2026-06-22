@@ -16,7 +16,7 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py ai_parser.py blob_uploader.py excel_exporter.py \
+COPY app.py ai_parser.py blob_uploader.py config.py excel_exporter.py \
      pdf_processor.py text_processor.py word_processor.py \
      ./
 

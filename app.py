@@ -10,6 +10,7 @@ from text_processor import TextProcessor
 from ai_parser import AIParser
 from excel_exporter import ExcelExporter
 from blob_uploader import BlobUploader
+from config import get_secret
 import base64
 
 # Hard cap: one batch cannot exceed this many files (uploader + processing).
@@ -35,7 +36,7 @@ def get_blob_uploader():
     builds it once. Returns None for graceful degradation when Azure is off.
     """
     try:
-        return BlobUploader.from_secrets(st.secrets)
+        return BlobUploader.from_settings()
     except Exception:
         return None
 
@@ -179,16 +180,8 @@ def render_country_tab(country, credentials_status):
 
 
 def check_credentials():
-    claude_status = False
-    
-    try:
-        # Check OpenRouter API key
-        if "CLAUDE_SONNET_4_API_KEY" in st.secrets:
-            claude_status = True
-            
-    except Exception as e:
-        st.error(f"Error checking credentials: {str(e)}")
-    
+    claude_status = bool(get_secret("CLAUDE_SONNET_4_API_KEY"))
+
     return {
         'claude_status': claude_status
     }
@@ -213,7 +206,12 @@ def process_resumes(uploaded_files, country):
                 pdf_processor = PDFProcessor()
                 word_processor = WordProcessor()
                 text_processor = TextProcessor()
-                ai_parser = AIParser(st.secrets["CLAUDE_SONNET_4_API_KEY"], country)
+                api_key = get_secret("CLAUDE_SONNET_4_API_KEY")
+                if not api_key:
+                    st.error("CLAUDE_SONNET_4_API_KEY is not configured.")
+                    st.session_state[_key('processing_in_progress', country)] = False
+                    return
+                ai_parser = AIParser(api_key, country)
             except Exception as e:
                 st.error(f"Error initializing services: {str(e)}")
                 st.session_state[_key('processing_in_progress', country)] = False
