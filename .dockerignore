@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+.venv
+venv
+env
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.idea
+.vscode
+.cursor
+*.swp
+*.swo
+
+# Streamlit secrets (mount at runtime, never bake into image)
+.streamlit/secrets.toml
+
+# Docker (avoid recursive context)
+Dockerfile*
+docker-compose*.yaml
+compose*.yaml
+nginx.conf
+
+# Docs / dev-only
+markdown
+.devcontainer
+*.md
+!README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / local data
+*.log
+terminals
