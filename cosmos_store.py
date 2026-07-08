@@ -7,6 +7,7 @@ Global Search tab. Uses the Cosmos DB NoSQL API with upsert by blob_path.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
@@ -84,17 +85,84 @@ def load_candidates() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _parse_boolean_query(query: str) -> list[dict]:
+    """Parse a boolean query string into a list of clause dicts.
+
+    Supports:
+      AND  — both sides must match (default when no operator given)
+      OR   — either side must match
+      NOT  — term must NOT appear
+
+    Examples:
+      account manager OR banker
+      python AND KL NOT junior
+      "senior executive" OR director
+
+    Returns a list of {"op": "AND"|"OR"|"NOT", "term": str}.
+    """
+    import re
+
+    # Tokenise: quoted phrases stay together, operators are keywords
+    tokens = re.findall(r'"[^"]+"|NOT|AND|OR|\S+', query, flags=re.IGNORECASE)
+
+    clauses: list[dict] = []
+    pending_op = "AND"  # default connector between bare terms
+
+    for token in tokens:
+        upper = token.upper()
+        if upper in ("AND", "OR", "NOT"):
+            if upper == "NOT":
+                pending_op = "NOT"
+            else:
+                pending_op = upper
+        else:
+            term = token.strip('"').lower()
+            clauses.append({"op": pending_op, "term": term})
+            # After a NOT the next bare term goes back to AND
+            if pending_op == "NOT":
+                pending_op = "AND"
+
+    return clauses
+
+
 def search_candidates(df: pd.DataFrame, query: str) -> pd.DataFrame:
-    """Case-insensitive search across all columns."""
-    terms = [t for t in query.strip().lower().split() if t]
-    if not terms or df.empty:
+    """Boolean search across all columns.
+
+    Supports AND, OR, NOT operators and quoted phrases.
+    Plain words without operators are treated as AND.
+
+    Examples
+    --------
+    account manager                     → both words must appear
+    account manager OR banker           → account+manager OR banker
+    python AND kuala lumpur NOT junior  → python AND KL but not junior
+    "senior executive"                  → exact phrase match
+    """
+    if not query.strip() or df.empty:
+        return df
+
+    clauses = _parse_boolean_query(query)
+    if not clauses:
         return df
 
     haystack = df.astype(str).apply(" | ".join, axis=1).str.lower()
-    mask = pd.Series(True, index=df.index)
-    for term in terms:
-        mask &= haystack.str.contains(term, regex=False)
-    return df[mask]
+
+    # Start with all-False for OR-first logic, all-True for AND-first
+    # Build the mask clause by clause
+    mask = None
+    for clause in clauses:
+        op = clause["op"]
+        term_mask = haystack.str.contains(clause["term"], regex=False)
+
+        if op == "NOT":
+            combined = ~term_mask
+            mask = combined if mask is None else (mask & combined)
+        elif op == "OR":
+            mask = term_mask if mask is None else (mask | term_mask)
+        else:  # AND (default)
+            mask = term_mask if mask is None else (mask & term_mask)
+
+    return df[mask] if mask is not None else df
 
 
 def candidate_to_document(parsed_data: dict, country: str) -> dict:
@@ -104,6 +172,7 @@ def candidate_to_document(parsed_data: dict, country: str) -> dict:
 
     return {
         "id": doc_id,
+        "processed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "country": country,
         "role_type": parsed_data.get("role type", ""),
         "full_name": parsed_data.get("full name", ""),

@@ -91,43 +91,89 @@ def render_global_search_tab():
 
     query = st.text_input(
         "Search candidates",
-        placeholder="e.g. full name, first name, mobile, email, job title, company, location...",
+        placeholder='E.g. sales consultant OR account executive',
         key="global_search_query",
     )
+    st.caption("Feel free to use Boolean Search (AND, OR, NOT, "") if needed.")
 
-    col_refresh, _ = st.columns([1, 5])
+    col_filter, col_refresh = st.columns([3, 1])
+    with col_filter:
+        date_filter = st.selectbox(
+            "Date filter",
+            options=["All time", "Today", "Yesterday", "Last 3 days", "Last 7 days", "Last 30 days"],
+            index=0,
+            key="global_search_date_filter",
+            label_visibility="collapsed",
+        )
     with col_refresh:
-        if st.button("Refresh data", key="global_search_refresh"):
+        if st.button("🔄 Refresh", key="global_search_refresh", use_container_width=True):
             cosmos_store.clear_cache()
 
-    try:
-        with st.spinner("Loading candidates from Cosmos DB..."):
+    results_placeholder = st.empty()
+
+    spinner_label = (
+        f"Filtering by {date_filter}..." if date_filter != "All time"
+        else "Loading candidates from Cosmos DB..."
+    )
+
+    with st.spinner(spinner_label):
+        try:
             df = cosmos_store.load_candidates()
-    except Exception as e:
-        st.error(f"Could not load data from Cosmos DB: {str(e)}")
-        with st.expander("Error Details"):
-            st.code(traceback.format_exc())
-        return
+        except Exception as e:
+            st.error(f"Could not load data from Cosmos DB: {str(e)}")
+            with st.expander("Error Details"):
+                st.code(traceback.format_exc())
+            return
 
-    if df.empty:
-        st.info(
-            f"No records found in Cosmos DB container `{cosmos_store.get_container_name()}`."
-        )
-        return
+        if df.empty:
+            results_placeholder.info(
+                f"No records found in Cosmos DB container `{cosmos_store.get_container_name()}`."
+            )
+            return
 
-    if query.strip():
-        results = cosmos_store.search_candidates(df, query)
-        st.caption(f"{len(results)} of {len(df)} candidate(s) match your search.")
-    else:
-        results = df
-        st.caption(f"Showing all {len(df)} candidate(s). Type above to search.")
+        # Apply date filter
+        from datetime import datetime, timedelta, timezone as tz
+        if date_filter != "All time" and "processed_at" in df.columns:
+            now = datetime.now(tz.utc)
+            cutoffs = {
+                "Today":        now.replace(hour=0, minute=0, second=0, microsecond=0),
+                "Yesterday":    (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0),
+                "Last 3 days":  now - timedelta(days=3),
+                "Last 7 days":  now - timedelta(days=7),
+                "Last 30 days": now - timedelta(days=30),
+            }
+            cutoff = cutoffs[date_filter]
+            parsed_dates = pd.to_datetime(df["processed_at"], utc=True, errors="coerce")
+            if date_filter == "Yesterday":
+                df = df[(parsed_dates >= cutoff) & (parsed_dates < cutoff + timedelta(days=1))]
+            else:
+                df = df[parsed_dates >= cutoff]
 
+        # Apply boolean search
+        if query.strip():
+            results = cosmos_store.search_candidates(df, query)
+        else:
+            results = df
+
+    # Render results outside the spinner so they don't flicker on rerun
     if results.empty:
-        st.info("No candidates match your search.")
+        results_placeholder.info("No candidates match your search.")
     else:
         _HIDDEN_COLS = {"id", "blob_path", "_rid", "_self", "_etag", "_attachments", "_ts"}
         display_cols = [c for c in results.columns if c not in _HIDDEN_COLS]
-        st.dataframe(results[display_cols], use_container_width=True, hide_index=True)
+        priority = [c for c in ("processed_at", "country") if c in display_cols]
+        ordered_cols = priority + [c for c in display_cols if c not in priority]
+
+        label = (
+            f"{len(results)} of {len(df)} candidate(s) match **\"{query}\"**"
+            if query.strip()
+            else f"**{len(results)}** candidate(s)"
+        )
+        if date_filter != "All time":
+            label += f" — {date_filter}"
+        st.caption(label)
+
+        results_placeholder.dataframe(results[ordered_cols], use_container_width=True, hide_index=True)
 
 
 def render_country_tab(country, credentials_status):
