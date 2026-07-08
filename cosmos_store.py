@@ -1,7 +1,7 @@
 """Global candidate storage and search backed by Azure Cosmos DB.
 
-Replaces Supabase for saving parsed resume fields and powering the
-Global Search tab. Uses the Cosmos DB NoSQL API with upsert by blob_path.
+Saves parsed resume fields and powers the Global Search tab.
+Uses the Cosmos DB NoSQL API with upsert by blob_path.
 """
 
 from __future__ import annotations
