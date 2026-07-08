@@ -72,10 +72,12 @@ def main():
     tabs = st.tabs(COUNTRIES + ["Global Search"])
     for tab, country in zip(tabs, COUNTRIES):
         with tab:
-            render_country_tab(country, credentials_status)
+            with st.container():
+                render_country_tab(country, credentials_status)
 
     with tabs[-1]:
-        render_global_search_tab()
+        with st.container():
+            render_global_search_tab()
 
 
 def render_global_search_tab():
@@ -109,12 +111,10 @@ def render_global_search_tab():
     with col_refresh:
         if st.button("🔄 Refresh", key="global_search_refresh", use_container_width=True):
             cosmos_store.clear_cache()
-            st.rerun()
 
     # ── Load data ─────────────────────────────────────────────────────────────
     try:
-        with st.spinner("Loading candidates..."):
-            df = cosmos_store.load_candidates()
+        df = cosmos_store.load_candidates()
     except Exception as e:
         st.error(f"Could not load data from Cosmos DB: {str(e)}")
         with st.expander("Error Details"):
