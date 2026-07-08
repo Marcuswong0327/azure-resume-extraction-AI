@@ -11,6 +11,7 @@ from ai_parser import AIParser
 from excel_exporter import ExcelExporter
 from blob_uploader import BlobUploader
 from config import get_secret
+import cosmos_store
 import base64
 
 # Hard cap: one batch cannot exceed this many files (uploader + processing).
@@ -68,10 +69,63 @@ def main():
     # Check credentials availability
     credentials_status = check_credentials()
 
-    tabs = st.tabs(COUNTRIES)
+    tabs = st.tabs(COUNTRIES + ["Global Search"])
     for tab, country in zip(tabs, COUNTRIES):
         with tab:
             render_country_tab(country, credentials_status)
+
+    with tabs[-1]:
+        render_global_search_tab()
+
+
+def render_global_search_tab():
+    """Search all archived candidates stored in Azure Cosmos DB."""
+    st.header("🔍 Global Candidate Search")
+
+    if not cosmos_store.is_configured():
+        st.warning(
+            "Cosmos DB is not configured. Add **COSMOS_ENDPOINT** and **COSMOS_KEY** "
+            "to your environment variables or `.streamlit/secrets.toml`, then restart the app."
+        )
+        return
+
+    query = st.text_input(
+        "Search candidates",
+        placeholder="e.g. full name, first name, mobile, email, job title, company, location...",
+        key="global_search_query",
+    )
+
+    col_refresh, _ = st.columns([1, 5])
+    with col_refresh:
+        if st.button("Refresh data", key="global_search_refresh"):
+            cosmos_store.clear_cache()
+
+    try:
+        with st.spinner("Loading candidates from Cosmos DB..."):
+            df = cosmos_store.load_candidates()
+    except Exception as e:
+        st.error(f"Could not load data from Cosmos DB: {str(e)}")
+        with st.expander("Error Details"):
+            st.code(traceback.format_exc())
+        return
+
+    if df.empty:
+        st.info(
+            f"No records found in Cosmos DB container `{cosmos_store.get_container_name()}`."
+        )
+        return
+
+    if query.strip():
+        results = cosmos_store.search_candidates(df, query)
+        st.caption(f"{len(results)} of {len(df)} candidate(s) match your search.")
+    else:
+        results = df
+        st.caption(f"Showing all {len(df)} candidate(s). Type above to search.")
+
+    if results.empty:
+        st.info("No candidates match your search.")
+    else:
+        st.dataframe(results, use_container_width=True, hide_index=True)
 
 
 def render_country_tab(country, credentials_status):
@@ -279,10 +333,26 @@ def process_resumes(uploaded_files, country):
                 parsed_data['filename'] = permanent_url or uploaded_file.name
                 if blob_path:
                     parsed_data['blob_path'] = blob_path
-                
+                else:
+                    parsed_data['blob_path'] = f"{country}/local/{uploaded_file.name}"
+
                 # Add to results
                 st.session_state[_key('processed_candidates', country)].append(parsed_data)
                 successful_processes += 1
+
+                if cosmos_store.is_configured():
+                    try:
+                        save_error = cosmos_store.save_candidate(parsed_data, country)
+                        if save_error:
+                            st.warning(
+                                f"Processed {uploaded_file.name} but could not save to "
+                                f"Cosmos DB: {save_error}"
+                            )
+                    except Exception as save_exc:
+                        st.warning(
+                            f"Processed {uploaded_file.name} but could not save to "
+                            f"Cosmos DB: {save_exc}"
+                        )
                 
                 
             except Exception as e:
