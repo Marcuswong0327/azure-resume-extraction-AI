@@ -230,12 +230,6 @@ def render_country_tab(country, credentials_status):
         if uploaded_files and not over_limit:
             st.success(f"{len(uploaded_files)} file(s) uploaded successfully")
 
-            # Display uploaded files
-            with st.expander("Uploaded Files", expanded=True):
-                for i, file in enumerate(uploaded_files, 1):
-                    file_type = file.name.split('.')[-1].upper()
-                    st.write(f"{i}. {file.name} ({file.size} bytes) - {file_type}")
-
             # Process files button
             process_disabled = (
                 not credentials_status['claude_status']
