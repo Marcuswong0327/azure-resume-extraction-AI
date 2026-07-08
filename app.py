@@ -69,15 +69,51 @@ def main():
     # Check credentials availability
     credentials_status = check_credentials()
 
-    tabs = st.tabs(COUNTRIES + ["Global Search"])
-    for tab, country in zip(tabs, COUNTRIES):
-        with tab:
-            with st.container():
-                render_country_tab(country, credentials_status)
+    ALL_TABS = COUNTRIES + ["Global Search"]
 
-    with tabs[-1]:
-        with st.container():
-            render_global_search_tab()
+    # CSS: make st.radio look identical to Streamlit's native tab bar
+    st.markdown("""
+    <style>
+    div[data-testid="stRadio"] > label { display: none; }
+    div[data-testid="stRadio"] > div {
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 0 !important;
+        border-bottom: 1px solid rgba(250,250,250,0.2);
+        padding-bottom: 0;
+        margin-bottom: 1rem;
+    }
+    div[data-testid="stRadio"] label {
+        padding: 8px 16px !important;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 400;
+        color: rgba(250,250,250,0.6);
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        background: none !important;
+    }
+    div[data-testid="stRadio"] label:has(input:checked) {
+        color: #ff4b4b !important;
+        border-bottom: 2px solid #ff4b4b !important;
+        font-weight: 600;
+    }
+    div[data-testid="stRadio"] label > div:first-child { display: none; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    active = st.radio(
+        "tab_nav",
+        options=ALL_TABS,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="active_tab",
+    )
+
+    if active in COUNTRIES:
+        render_country_tab(active, credentials_status)
+    else:
+        render_global_search_tab()
 
 
 def render_global_search_tab():
