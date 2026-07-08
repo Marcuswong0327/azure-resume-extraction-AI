@@ -125,7 +125,9 @@ def render_global_search_tab():
     if results.empty:
         st.info("No candidates match your search.")
     else:
-        st.dataframe(results, use_container_width=True, hide_index=True)
+        _HIDDEN_COLS = {"id", "blob_path", "_rid", "_self", "_etag", "_attachments", "_ts"}
+        display_cols = [c for c in results.columns if c not in _HIDDEN_COLS]
+        st.dataframe(results[display_cols], use_container_width=True, hide_index=True)
 
 
 def render_country_tab(country, credentials_status):
