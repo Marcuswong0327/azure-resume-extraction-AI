@@ -125,18 +125,23 @@ def _parse_boolean_query(query: str) -> list[dict]:
     return clauses
 
 
+_SEARCH_COLS = [
+    "full_name", "first_name", "last_name",
+    "mobile", "email",
+    "job_title_1", "job_title_2", "job_title_3",
+    "company_1", "company_2", "company_3",
+    "location",
+]
+
+
 def search_candidates(df: pd.DataFrame, query: str) -> pd.DataFrame:
-    """Boolean search across all columns.
+    """Boolean search across candidate fields only.
+
+    Searches: full name, first/last name, mobile, email,
+    job titles (1-3), companies (1-3), location.
 
     Supports AND, OR, NOT operators and quoted phrases.
     Plain words without operators are treated as AND.
-
-    Examples
-    --------
-    account manager                     → both words must appear
-    account manager OR banker           → account+manager OR banker
-    python AND kuala lumpur NOT junior  → python AND KL but not junior
-    "senior executive"                  → exact phrase match
     """
     if not query.strip() or df.empty:
         return df
@@ -145,10 +150,10 @@ def search_candidates(df: pd.DataFrame, query: str) -> pd.DataFrame:
     if not clauses:
         return df
 
-    haystack = df.astype(str).apply(" | ".join, axis=1).str.lower()
+    # Only concatenate columns that exist in this DataFrame
+    cols = [c for c in _SEARCH_COLS if c in df.columns]
+    haystack = df[cols].astype(str).apply(" | ".join, axis=1).str.lower()
 
-    # Start with all-False for OR-first logic, all-True for AND-first
-    # Build the mask clause by clause
     mask = None
     for clause in clauses:
         op = clause["op"]
@@ -159,7 +164,7 @@ def search_candidates(df: pd.DataFrame, query: str) -> pd.DataFrame:
             mask = combined if mask is None else (mask & combined)
         elif op == "OR":
             mask = term_mask if mask is None else (mask | term_mask)
-        else:  # AND (default)
+        else:
             mask = term_mask if mask is None else (mask & term_mask)
 
     return df[mask] if mask is not None else df

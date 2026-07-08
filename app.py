@@ -1,9 +1,9 @@
 import os
+import traceback
+from datetime import datetime, timedelta, timezone as _tz
 
 import streamlit as st
 import pandas as pd
-import json
-import traceback
 from pdf_processor import PDFProcessor
 from word_processor import WordProcessor
 from text_processor import TextProcessor
@@ -89,12 +89,13 @@ def render_global_search_tab():
         )
         return
 
+    # ── Controls ──────────────────────────────────────────────────────────────
     query = st.text_input(
         "Search candidates",
-        placeholder='E.g. sales consultant OR account executive',
+        placeholder="E.g. sales consultant OR account executive",
         key="global_search_query",
     )
-    st.caption("Feel free to use Boolean Search (AND, OR, NOT, "") if needed.")
+    st.caption('Supports **AND**, **OR**, **NOT** and **"quoted phrases"**. Plain words = AND.')
 
     col_filter, col_refresh = st.columns([3, 1])
     with col_filter:
@@ -108,72 +109,61 @@ def render_global_search_tab():
     with col_refresh:
         if st.button("🔄 Refresh", key="global_search_refresh", use_container_width=True):
             cosmos_store.clear_cache()
+            st.rerun()
 
-    results_placeholder = st.empty()
-
-    spinner_label = (
-        f"Filtering by {date_filter}..." if date_filter != "All time"
-        else "Loading candidates from Cosmos DB..."
-    )
-
-    with st.spinner(spinner_label):
-        try:
+    # ── Load data ─────────────────────────────────────────────────────────────
+    try:
+        with st.spinner("Loading candidates..."):
             df = cosmos_store.load_candidates()
-        except Exception as e:
-            st.error(f"Could not load data from Cosmos DB: {str(e)}")
-            with st.expander("Error Details"):
-                st.code(traceback.format_exc())
-            return
+    except Exception as e:
+        st.error(f"Could not load data from Cosmos DB: {str(e)}")
+        with st.expander("Error Details"):
+            st.code(traceback.format_exc())
+        return
 
-        if df.empty:
-            results_placeholder.info(
-                f"No records found in Cosmos DB container `{cosmos_store.get_container_name()}`."
-            )
-            return
+    if df.empty:
+        st.info(f"No records found in Cosmos DB container `{cosmos_store.get_container_name()}`.")
+        return
 
-        # Apply date filter
-        from datetime import datetime, timedelta, timezone as tz
-        if date_filter != "All time" and "processed_at" in df.columns:
-            now = datetime.now(tz.utc)
-            cutoffs = {
-                "Today":        now.replace(hour=0, minute=0, second=0, microsecond=0),
-                "Yesterday":    (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0),
-                "Last 3 days":  now - timedelta(days=3),
-                "Last 7 days":  now - timedelta(days=7),
-                "Last 30 days": now - timedelta(days=30),
-            }
-            cutoff = cutoffs[date_filter]
-            parsed_dates = pd.to_datetime(df["processed_at"], utc=True, errors="coerce")
-            if date_filter == "Yesterday":
-                df = df[(parsed_dates >= cutoff) & (parsed_dates < cutoff + timedelta(days=1))]
-            else:
-                df = df[parsed_dates >= cutoff]
-
-        # Apply boolean search
-        if query.strip():
-            results = cosmos_store.search_candidates(df, query)
+    # ── Date filter ───────────────────────────────────────────────────────────
+    if date_filter != "All time" and "processed_at" in df.columns:
+        now = datetime.now(_tz.utc)
+        cutoffs = {
+            "Today":        now.replace(hour=0, minute=0, second=0, microsecond=0),
+            "Yesterday":    (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0),
+            "Last 3 days":  now - timedelta(days=3),
+            "Last 7 days":  now - timedelta(days=7),
+            "Last 30 days": now - timedelta(days=30),
+        }
+        cutoff = cutoffs[date_filter]
+        parsed_dates = pd.to_datetime(df["processed_at"], utc=True, errors="coerce")
+        if date_filter == "Yesterday":
+            mask = (parsed_dates >= cutoff) & (parsed_dates < cutoff + timedelta(days=1))
         else:
-            results = df
+            mask = parsed_dates >= cutoff
+        df = df[mask]
 
-    # Render results outside the spinner so they don't flicker on rerun
+    # ── Boolean search ────────────────────────────────────────────────────────
+    results = cosmos_store.search_candidates(df, query) if query.strip() else df
+
+    # ── Results ───────────────────────────────────────────────────────────────
+    label = (
+        f"{len(results)} of {len(df)} candidate(s) match **\"{query}\"**"
+        if query.strip()
+        else f"**{len(results)}** candidate(s)"
+    )
+    if date_filter != "All time":
+        label += f" — {date_filter}"
+    st.caption(label)
+
     if results.empty:
-        results_placeholder.info("No candidates match your search.")
+        st.info("No candidates match your search.")
     else:
         _HIDDEN_COLS = {"id", "blob_path", "_rid", "_self", "_etag", "_attachments", "_ts"}
         display_cols = [c for c in results.columns if c not in _HIDDEN_COLS]
         priority = [c for c in ("processed_at", "country") if c in display_cols]
         ordered_cols = priority + [c for c in display_cols if c not in priority]
-
-        label = (
-            f"{len(results)} of {len(df)} candidate(s) match **\"{query}\"**"
-            if query.strip()
-            else f"**{len(results)}** candidate(s)"
-        )
-        if date_filter != "All time":
-            label += f" — {date_filter}"
-        st.caption(label)
-
-        results_placeholder.dataframe(results[ordered_cols], use_container_width=True, hide_index=True)
+        st.dataframe(results[ordered_cols], use_container_width=True, hide_index=True)
 
 
 def render_country_tab(country, credentials_status):
