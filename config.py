@@ -30,3 +30,20 @@ def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
         pass
 
     return default
+
+
+_CLAUDE_API_KEY_NAMES = (
+    "CLAUDE_SONNET_4_API_KEY",
+    "CLAUDE_SONNET_4_API_KEY_2",
+    "CLAUDE_SONNET_4_API_KEY_3",
+)
+
+
+def get_claude_api_keys() -> list[str]:
+    """Return configured OpenRouter Claude Sonnet 4 keys in fallback order (1→2→3)."""
+    keys: list[str] = []
+    for name in _CLAUDE_API_KEY_NAMES:
+        value = get_secret(name)
+        if value and str(value).strip():
+            keys.append(str(value).strip())
+    return keys

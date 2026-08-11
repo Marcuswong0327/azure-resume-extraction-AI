@@ -141,15 +141,19 @@ older. `duration N` includes an auto-appended tenure label.
 Set these in `.streamlit/secrets.toml` (local) or the Streamlit Cloud secrets UI:
 
 ```toml
-# Required for AI parsing (OpenRouter key for Claude Sonnet 4)
+# Required for AI parsing (OpenRouter keys for anthropic/claude-sonnet-4)
 CLAUDE_SONNET_4_API_KEY = "sk-or-..."
+# Optional fallbacks — on failure the parser switches immediately: 1 → 2 → 3 → 1 …
+CLAUDE_SONNET_4_API_KEY_2 = "sk-or-..."
+CLAUDE_SONNET_4_API_KEY_3 = "sk-or-..."
 
 # Optional — enables Azure Blob archiving. Omit to run without archiving.
 AZURE_STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"
 AZURE_BLOB_CONTAINER = "resume-archive"
 ```
 
-- Without `CLAUDE_SONNET_4_API_KEY`, the **Process Resumes** button is disabled.
+- Without at least `CLAUDE_SONNET_4_API_KEY`, the **Process Resumes** button is disabled.
+- Keys `_2` / `_3` are optional; when set, a failed call moves to the next key straight away and wraps after the last.
 - Without the Azure secrets, archiving is skipped and a subtle note is shown.
 
 ---

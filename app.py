@@ -10,7 +10,7 @@ from text_processor import TextProcessor
 from ai_parser import AIParser
 from excel_exporter import ExcelExporter
 from blob_uploader import BlobUploader
-from config import get_secret
+from config import get_claude_api_keys
 import cosmos_store
 import base64
 
@@ -302,7 +302,7 @@ def render_country_tab(country, credentials_status):
 
 
 def check_credentials():
-    claude_status = bool(get_secret("CLAUDE_SONNET_4_API_KEY"))
+    claude_status = bool(get_claude_api_keys())
 
     return {
         'claude_status': claude_status
@@ -328,12 +328,15 @@ def process_resumes(uploaded_files, country):
                 pdf_processor = PDFProcessor()
                 word_processor = WordProcessor()
                 text_processor = TextProcessor()
-                api_key = get_secret("CLAUDE_SONNET_4_API_KEY")
-                if not api_key:
-                    st.error("CLAUDE_SONNET_4_API_KEY is not configured.")
+                api_keys = get_claude_api_keys()
+                if not api_keys:
+                    st.error(
+                        "No Claude API key configured. Set CLAUDE_SONNET_4_API_KEY "
+                        "(and optionally CLAUDE_SONNET_4_API_KEY_2 / _3 as fallbacks)."
+                    )
                     st.session_state[_key('processing_in_progress', country)] = False
                     return
-                ai_parser = AIParser(api_key, country)
+                ai_parser = AIParser(api_keys, country)
             except Exception as e:
                 st.error(f"Error initializing services: {str(e)}")
                 st.session_state[_key('processing_in_progress', country)] = False

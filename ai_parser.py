@@ -8,6 +8,8 @@ import streamlit as st
 from dateutil import parser as date_parser
 from dateutil.relativedelta import relativedelta
 
+from api_key_rotator import ApiKeyRotator
+
 _PRESENT_END = re.compile(
     r"^(present|current|now|till date|to date|ongoing|today)$",
     re.IGNORECASE,
@@ -39,20 +41,30 @@ class AIParser:
     """Handle Claude Sonnet 4 API integration via OpenRouter for intelligent resume parsing"""
     
     def __init__(self, api_key, country="AU"):
+        # Accept a single key (str) or an ordered fallback list.
+        if isinstance(api_key, str):
+            keys = [api_key]
+        elif api_key is None:
+            keys = []
+        else:
+            keys = list(api_key)
 
-        if not api_key:
-            raise ValueError("OpenRouter API key is required")
-
+        self._rotator = ApiKeyRotator(keys)
         if country not in _COUNTRY_PHONE_RULES:
             raise ValueError(f"Unsupported country: {country!r} (expected one of {list(_COUNTRY_PHONE_RULES)})")
 
-        self.api_key = api_key
         self.country = country
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {api_key}",
+
+    @property
+    def api_key(self) -> str:
+        return self._rotator.current
+
+    def _auth_headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self._rotator.current}",
             "Content-Type": "application/json",
-            "X-Title": "Resume Parser"
+            "X-Title": "Resume Parser",
         }
 
     @staticmethod
@@ -232,22 +244,40 @@ General:
 """
         return prompt
     
-    def _make_api_call_with_retry(self, prompt, max_retries=3):
+    def _make_api_call_with_retry(self, prompt, max_rounds=2):
+        """Try current key; on failure advance to next key immediately and wrap after the last.
 
-        for attempt in range(max_retries):
+        ``max_rounds`` = how many full passes through the key pool (default 2 → 3 keys × 2 = 6 tries).
+        """
+        max_attempts = max(1, len(self._rotator) * max_rounds)
+        last_error = None
+
+        for attempt in range(max_attempts):
+            key_slot = (attempt % len(self._rotator)) + 1
             try:
                 response = self._make_api_call(prompt)
                 if response:
                     return response
-                    
+                last_error = "empty response"
             except Exception as e:
-                if attempt == max_retries - 1:
-                    st.error(f"OpenRouter API failed after {max_retries} attempts: {str(e)}")
-                    return None
-                else:
-                    st.warning(f"OpenRouter API attempt {attempt + 1} failed, retrying...")
-                    time.sleep(2 ** attempt)  # Exponential backoff
-        
+                last_error = e
+
+            if attempt == max_attempts - 1:
+                st.error(
+                    f"OpenRouter API failed after {max_attempts} attempts "
+                    f"across {len(self._rotator)} key(s): {last_error}"
+                )
+                return None
+
+            next_key_slot = ((attempt + 1) % len(self._rotator)) + 1
+            st.warning(
+                f"OpenRouter key #{key_slot} failed; switching to key #{next_key_slot} immediately…"
+            )
+            self._rotator.advance()
+            # Brief pause only after a full cycle through all keys.
+            if next_key_slot == 1 and len(self._rotator) > 1:
+                time.sleep(1)
+
         return None
     
     def _make_api_call(self, prompt):
@@ -268,7 +298,7 @@ General:
             
             response = requests.post(
                 self.base_url,
-                headers=self.headers,
+                headers=self._auth_headers(),
                 json=payload,
                 timeout=(30, 120),
             )
@@ -282,7 +312,7 @@ General:
                 try:
                     error_detail = response.json()
                     error_msg += f" - {error_detail}"
-                except:
+                except Exception:
                     error_msg += f" - {response.text}"
                 raise Exception(error_msg)
                 
