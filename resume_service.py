@@ -85,7 +85,7 @@ class ResumeParsingService:
             archiver = None 
         
         if cosmos_store.is_configured():
-            store = cosmos_store || None
+            store = cosmos_store or None
         
         return cls(
             parser_factory=lambda country: AIParser(api_keys, country), 
