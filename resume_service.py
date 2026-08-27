@@ -90,7 +90,7 @@ class ResumeParsingService:
         return cls(
             parser_factory=lambda country: AIParser(api_keys, country), 
             extractors=default_extractors(),
-            archiver-archiver, 
+            archiver=archiver, 
             store=store,
         )
 
