@@ -5,6 +5,9 @@
   "description": "Streamlit resume parser. Python: requirements.txt (Streamlit Cloud). Legacy .doc text uses the antiword system package — list antiword in packages.txt at repo root (not in requirements.txt or npm).",
   "scripts": {
     "start": "python -m streamlit run app.py",
-    "start:open": "python -m streamlit run app.py --browser.gatherUsageStats false"
+    "start:open": "python -m streamlit run app.py --browser.gatherUsageStats false",
+    "start:api": "python -m uvicorn api:app --host 0.0.0.0 --port 8000",
+    "dev:api": "python -m uvicorn api:app --reload --port 8000",
+    "test": "python -m pytest -q"
   }
 }

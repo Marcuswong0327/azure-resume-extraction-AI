@@ -89,6 +89,9 @@ flowchart TD
 | `ai_parser.py` | Builds the parsing prompt, calls **Claude Sonnet 4 via OpenRouter** with retry/backoff, parses & validates the JSON, computes tenure, standardizes phone numbers to E.164 per country. |
 | `excel_exporter.py` | Renders the parsed records to a styled `.xlsx` with **openpyxl**. |
 | `blob_uploader.py` | Content-addressable Azure Blob archiving with skip-if-exists dedup; returns the permanent blob URL. Returns `None` (disabled) when the SDK or secrets are absent. |
+| `api.py` | FastAPI integration endpoint (`POST /v1/resumes/parse`) for external systems; API-key auth, batch limit, per-file error reporting. |
+| `api_key_auth.py` | Loads `RESUME_API_KEYS` and verifies a presented key (constant-time) to a client name. |
+| `resume_service.py` | Headless pipeline (archive → extract → AI parse → persist) shared by the API; collaborators injected, no Streamlit dependency. |
 | `requirements.txt` | Python dependencies (pip / Streamlit Cloud). |
 | `packages.txt` | System packages for Streamlit Cloud — contains `antiword` for legacy `.doc`. |
 | `package.json` | Convenience npm scripts (`start`) to launch Streamlit. |
@@ -136,6 +139,102 @@ older. `duration N` includes an auto-appended tenure label.
 
 ---
 
+## Integration API (for other systems)
+
+Besides the Streamlit UI, the same pipeline is exposed over HTTP so other
+systems can submit resumes machine-to-machine.
+
+| | |
+|---|---|
+| Endpoint | `POST /v1/resumes/parse` |
+| Auth | `X-API-Key: <key>` (or `Authorization: Bearer <key>`) |
+| Body | `multipart/form-data`: one or more `files`, optional `country` (`AU` default, or `MY`) |
+| Health | `GET /health` (public) |
+| Docs | `GET /docs` (OpenAPI/Swagger) |
+
+### Configure keys
+
+One key per calling system, so a single partner can be revoked without
+affecting the others:
+
+```toml
+RESUME_API_KEYS = "partner-ats:sk_live_xxx,partner-hris:sk_live_yyy"
+```
+
+Generate a key with:
+
+```bash
+python -c "import secrets; print('sk_linktal_' + secrets.token_urlsafe(32))"
+```
+
+When `RESUME_API_KEYS` is empty the endpoint answers `503` — it never runs
+unauthenticated.
+
+### Example request
+
+```bash
+curl -X POST https://your-host/v1/resumes/parse \
+  -H "X-API-Key: sk_linktal_xxx" \
+  -F "country=AU" \
+  -F "files=@candidate.pdf" \
+  -F "files=@another.docx"
+```
+
+### Example response
+
+```json
+{
+  "country": "AU",
+  "parsed": 1,
+  "failed": 1,
+  "candidates": [
+    {
+      "full_name": "Ada Lovelace",
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "mobile": "+61412345678",
+      "email": "ada@example.com",
+      "job_title_1": "Software Engineer",
+      "company_1": "Analytical Engines Ltd",
+      "duration_1": "Jan 2020 - Jan 2024 (4 years)",
+      "location": "Sydney",
+      "source_file": "https://<account>.blob.core.windows.net/resume-archive/AU/<sha256>.pdf",
+      "blob_path": "AU/<sha256>.pdf"
+    }
+  ],
+  "errors": [
+    { "filename": "photo.png", "error": "Unsupported file type '.png'. Supported: pdf, docx, doc, txt." }
+  ]
+}
+```
+
+### Status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | At least one file parsed; check `errors` for partial failures |
+| `400` | Unsupported `country` |
+| `401` | Missing or invalid API key |
+| `413` | More than 300 files in one request |
+| `422` | Every submitted file failed (unsupported type, no extractable text) |
+| `503` | No API keys configured, or the AI pipeline is not configured |
+
+### Running the API
+
+```bash
+# local
+python -m uvicorn api:app --port 8000     # or: npm run start:api
+
+# docker (UI on :80/, API on :80/v1/... via nginx)
+docker compose up --build
+```
+
+Behaviour matches the UI: files are archived to Azure Blob Storage when
+configured (fail-soft), and parsed candidates are saved to Cosmos DB when
+configured, so API submissions also appear in **Global Search**.
+
+---
+
 ## Configuration (secrets)
 
 Set these in `.streamlit/secrets.toml` (local) or the Streamlit Cloud secrets UI:
@@ -146,6 +245,9 @@ CLAUDE_SONNET_4_API_KEY = "sk-or-..."
 # Optional fallbacks — on failure the parser switches immediately: 1 → 2 → 3 → 1 …
 CLAUDE_SONNET_4_API_KEY_2 = "sk-or-..."
 CLAUDE_SONNET_4_API_KEY_3 = "sk-or-..."
+
+# Required only for the integration API — one key per calling system.
+RESUME_API_KEYS = "partner-ats:sk_live_xxx,partner-hris:sk_live_yyy"
 
 # Optional — enables Azure Blob archiving. Omit to run without archiving.
 AZURE_STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"
